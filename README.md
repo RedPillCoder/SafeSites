@@ -51,4 +51,4 @@ We welcome contributions to this list! Please read our [CONTRIBUTING.md](CONTRIB
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE.md).
+This project is licensed under the [CC BY-NC-ND 4.0 License](LICENSE.md).
