@@ -5,7 +5,7 @@ Welcome to the Safe Sites Repository! This curated list provides a collection of
 ## Categories
 
 - [Educational](SafeSites/Educational)
-- [News and Media](#News-and-Media)
+- [News and Media](SafeSites/News-and-Media)
 - [Entertainment](#Entertainment)
 - [Productivity](#Productivity)
 - [Health and Wellness](#Health-and-Wellness)
