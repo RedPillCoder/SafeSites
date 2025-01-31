@@ -7,7 +7,7 @@ Welcome to the Safe Sites Repository! This curated list provides a collection of
 - [Educational](SafeSites/Educational)
 - [News and Media](SafeSites/News-and-Media)
 - [Entertainment](SafeSites/Entertainment)
-- [Productivity](#Productivity)
+- [Productivity](SafeSites/Productivity)
 - [Health and Wellness](#Health-and-Wellness)
 - [Science and Technology](#Science-and-Technology)
 - [Arts and Culture](#Arts-and-Culture)
