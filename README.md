@@ -4,14 +4,14 @@ Welcome to the Safe Sites Repository! This curated list provides a collection of
 
 ## Categories
 
-- [Educational](#educational)
-- [News and Media](#news-and-media)
-- [Entertainment](#entertainment)
-- [Productivity](#productivity)
-- [Health and Wellness](#health-and-wellness)
-- [Science and Technology](#science-and-technology)
-- [Arts and Culture](#arts-and-culture)
-- [Government and Public Services](#government-and-public-services)
+- [Educational](#Educational)
+- [News and Media](#News-and-Media)
+- [Entertainment](#Entertainment)
+- [Productivity](#Productivity)
+- [Health and Wellness](#Health-and-Wellness)
+- [Science and Technology](#Science-and-Technology)
+- [Arts and Culture](#Arts-and-Culture)
+- [Government and Public Services](#Government-and-Public-Services)
 
 ## License
 
