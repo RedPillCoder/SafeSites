@@ -1,10 +1,12 @@
-Website: https://www.udemy.com/
+# Website Status Report
 
-| Category | Status |
-|----------|--------|
-| Virus Free | ✓ |
-| HTTPS Encryption | ✓ |
-| Old Domain Age | ✓ |
-| HTTP Security Headers | ✓ |
+**Website:** [Udemy](https://www.udemy.com/)
 
-Last checked as of Saturday, February 01, 2025
+| **Category**                | **Status** |
+|-----------------------------|------------|
+| Virus Free                  | ✅         |
+| HTTPS Encryption            | ✅         |
+| Old Domain Age              | ✅         |
+| HTTP Security Headers       | ✅         |
+
+Last checked: Saturday, February 01, 2025
