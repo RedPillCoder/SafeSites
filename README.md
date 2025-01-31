@@ -4,7 +4,7 @@ Welcome to the Safe Sites Repository! This curated list provides a collection of
 
 ## Categories
 
-- [Educational](https://github.com/RedPillCoder/SafeSites/tree/8e127328d3280c02e8bb4929ec1aaf7899fd6190/SafeSites/Educational)
+- [Educational](SafeSites/Educational)
 - [News and Media](#News-and-Media)
 - [Entertainment](#Entertainment)
 - [Productivity](#Productivity)
