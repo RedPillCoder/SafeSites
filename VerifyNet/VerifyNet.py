@@ -1,15 +1,10 @@
-"""
-Safe Sites Repository — Neuron Edition v4 (Fixed)
-Free-only, secure, authenticity-focused web resource verifier.
-"""
-
 import asyncio, csv, datetime as dt, json, re, socket, sqlite3, ssl, sys, textwrap, time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
-import aiohttp, tldextract
+import aiohttp, tldextract, streamlit as st
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 
@@ -81,7 +76,7 @@ def export_repo(path: Path):
         r["reasons"]=json.loads(r.get("reasons") or "[]")
         r["security_headers"]=json.loads(r.get("security_headers") or "{}")
     path.write_text(json.dumps(rows,indent=2,ensure_ascii=False),encoding="utf-8")
-    print(f"Exported {len(rows)} safe sites to {path}")
+    return rows
 
 # ---------------- BLOCKLISTS ---------------- #
 async def _fetch_text(session,url):
@@ -170,7 +165,7 @@ def extract_title_desc(html: bytes) -> Tuple[Optional[str], Optional[str]]:
             desc = m["content"].strip()
         if not desc:
             og = soup.find("meta", property="og:description")
-            if og and og.get("content"):
+            if og and og.get:
                 desc = og["content"].strip()
         return title, desc
     except:
@@ -226,188 +221,108 @@ def search_web(query: str, max_results: int = 30) -> List[str]:
             uniq.append(u)
     return uniq
 
-# ---------------- HTTP FETCH ---------------- #
-async def _fetch_with_redirects(session, url):
-    try:
-        async with session.head(url, allow_redirects=True, max_redirects=MAX_REDIRECTS) as resp:
-            final_url = str(resp.url)
-            history_len = len(resp.history)
-            content = b""
-            ct = resp.headers.get("Content-Type", "")
-            if not ct or not is_html_content_type(ct):
-                async with session.get(url, allow_redirects=True, max_redirects=MAX_REDIRECTS) as r2:
-                    body = await r2.read()
-                    return r2, body, str(r2.url), len(r2.history)
-            return resp, content, final_url, history_len
-    except aiohttp.TooManyRedirects:
-        return None, None, None, MAX_REDIRECTS + 1
-    except:
-        try:
-            async with session.get(url, allow_redirects=True, max_redirects=MAX_REDIRECTS) as resp:
-                body = await resp.read()
-                return resp, body, str(resp.url), len(resp.history)
-        except aiohttp.TooManyRedirects:
-            return None, None, None, MAX_REDIRECTS + 1
-        except:
-            return None, None, None, 0
-
-def _enforce_https(url: str) -> str:
-    p = urlparse(url)
-    if not p.scheme:
-        return "https://" + url
-    if p.scheme != "https":
-        return url.replace(f"{p.scheme}://", "https://", 1)
-    return url
-
 # ---------------- SITE CHECK ---------------- #
 async def check_site(url: str, blocklists: Dict[str, set], sem: asyncio.Semaphore) -> SiteRecord:
     async with sem:
         now = dt.datetime.utcnow().isoformat() + "Z"
         original = url.strip()
-        https_url = _enforce_https(original)
-        p = urlparse(https_url)
+        p = urlparse(original)
         domain = tldextract.extract(p.netloc).registered_domain
         reasons = []
-        if domain in blocklists["domains"] or original in blocklists["urls"] or https_url in blocklists["urls"]:
+        if domain in blocklists["domains"] or original in blocklists["urls"]:
             return SiteRecord(original, domain, "Science and Technology", False, ["Listed on public blocklists"], now, blocklisted=True)
         if not await dns_resolves(p.hostname or ""):
             return SiteRecord(original, domain, "Science and Technology", False, ["DNS resolution failed"], now)
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
         async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}, timeout=timeout) as session:
-            resp, body, final_url, redirects = await _fetch_with_redirects(session, https_url)
-            if resp is None or final_url is None:
-                return SiteRecord(original, domain, "Science and Technology", False, ["Site unreachable over HTTPS"], now)
-            status = resp.status
-            headers = dict(resp.headers)
-            ct = headers.get("Content-Type", "")
-            https = final_url.startswith("https://")
-            if redirects > MAX_REDIRECTS:
-                reasons.append(f"Excessive redirects ({redirects})")
-            if urlparse(final_url).hostname and (urlparse(final_url).hostname != p.hostname):
-                reasons.append("Cross-domain redirect")
-            if status >= 400:
-                reasons.append(f"HTTP status {status}")
-            if body is not None and len(body) > 3_000_000:
-                reasons.append("Landing page too large (>3MB)")
-            if not is_html_content_type(ct):
-                reasons.append(f"Non-HTML landing content-type: {ct or 'unknown'}")
-            title, desc = extract_title_desc(body or b"")
-            category = infer_category(domain, title, desc)
-            tls_ok, tls_expired = await asyncio.get_event_loop().run_in_executor(None, lambda: get_tls_info(urlparse(final_url).hostname or p.hostname or ""))
-            if not tls_ok:
-                reasons.append("TLS handshake failed")
-            if tls_expired is True:
-                reasons.append("TLS certificate expired")
-            sec = score_security_headers(headers)
-            hsts = bool(sec.get("hsts"))
-            critical_fail = (not https or not tls_ok or status >= 400 or (tls_expired is True) or redirects > MAX_REDIRECTS)
-            reasons_filtered = [r for r in reasons if not r.startswith("Non-HTML")]
-            safe = not critical_fail and len(reasons_filtered) == 0
-            return SiteRecord(original, domain, category, safe, [] if safe else reasons_filtered, now, title, desc, final_url, status, https, tls_ok, tls_expired, hsts, sec, False)
+            try:
+                async with session.get(original, allow_redirects=True, max_redirects=MAX_REDIRECTS) as resp:
+                    body = await resp.read()
+                    status = resp.status
+                    headers = dict(resp.headers)
+                    https = original.startswith("https://")
+                    title, desc = extract_title_desc(body)
+                    category = infer_category(domain, title, desc)
+                    tls_ok, tls_expired = await asyncio.get_event_loop().run_in_executor(None, lambda: get_tls_info(p.hostname or ""))
+                    sec = score_security_headers(headers)
+                    hsts = bool(sec.get("hsts"))
+                    if status >= 400:
+                        reasons.append(f"HTTP status {status}")
+                    if tls_expired:
+                        reasons.append("TLS certificate expired")
+                    safe = (status < 400) and tls_ok and not tls_expired
+                    return SiteRecord(original, domain, category, safe, reasons, now, title, desc, str(resp.url), status, https, tls_ok, tls_expired, hsts, sec, False)
+            except:
+                return SiteRecord(original, domain, "Science and Technology", False, ["Fetch failed"], now)
 
 # ---------------- PIPELINE ---------------- #
-async def pipeline(query: str, limit: int = 30, json_out: bool = False):
+async def pipeline(query: str, limit: int = 30) -> List[SiteRecord]:
     blocklists = await load_blocklists_async()
     urls = search_web(query, max_results=limit)
     sem = asyncio.Semaphore(CONCURRENCY)
     tasks = [check_site(u, blocklists, sem) for u in urls]
-    results = []
-    for i in range(0, len(tasks), CONCURRENCY):
-        chunk = tasks[i:i+CONCURRENCY]
-        chunk_results = await asyncio.gather(*chunk)
-        for rec in chunk_results:
-            save_record(rec)
-            results.append(rec)
-            status = "SAFE" if rec.safe else "UNSAFE"
-            color = "\033[92m" if rec.safe else "\033[91m"
-            reset = "\033[0m"
-            reason_str = f" — {', '.join(rec.reasons)}" if rec.reasons else ""
-            print(f"{color}[{status}]{reset} {rec.category} — {rec.domain} — {rec.title or rec.final_url or rec.url}{reason_str}")
-    if json_out:
-        print(json.dumps([asdict(r) for r in results], indent=2, ensure_ascii=False))
+    results = await asyncio.gather(*tasks)
+    for rec in results:
+        save_record(rec)
+    return results
+
+# ---------------- STREAMLIT UI ---------------- #
+def run_ui():
+    st.title("🔍 Safe Sites Repository")
+    query = st.text_input("Enter search query")
+    limit = st.slider("Number of results", 5, 50, 25)
+    if st.button("Search"):
+        with st.spinner("Searching and verifying..."):
+            results = asyncio.run(pipeline(query, limit))
+        safe_sites = [r for r in results if r.safe]
+        if safe_sites:
+            st.success(f"Found {len(safe_sites)} SAFE sites")
+            st.table([{"Category": r.category, "Domain": r.domain, "Title": r.title, "URL": r.final_url or r.url} for r in safe_sites])
+            if st.button("Export to JSON"):
+                export_path = APP_DIR / "safe_sites_export.json"
+                export_repo(export_path)
+                st.info(f"Exported to {export_path}")
+        else:
+            st.warning("No safe sites found.")
 
 # ---------------- CLI ---------------- #
 def print_help():
-    msg = """
-    Safe Sites Repository (free-only)
+    print("""
+    Safe Sites Repository
 
     Commands:
-      search "<query>" [--limit N] [--json]   Search the web and verify safety.
-      review [--category "Name"] [--limit N] [--json]
-                                              Show verified safe sites.
-      export --out path.json                  Export safe sites as JSON.
-      refresh-blocklists                      Refresh blocklist cache.
-
-    Examples:
-      python safe_sites.py search "perth wa government public services site" --limit 25
-      python safe_sites.py review --category "Government and Public Services"
-      python safe_sites.py export --out safe_sites.json
-    """.strip()
-    print(textwrap.dedent(msg))
+      search "<query>" --limit N   Search and verify sites
+      review                       Show safe sites
+      export --out file.json       Export safe sites
+      ui                           Launch web interface
+    """)
 
 def main():
     if len(sys.argv) == 1:
         print_help()
         return
-
     cmd = sys.argv[1].lower()
     if cmd == "search":
-        if len(sys.argv) < 3:
-            print_help(); sys.exit(1)
         query = sys.argv[2]
         limit = 30
-        json_out = "--json" in sys.argv
         if "--limit" in sys.argv:
-            try:
-                limit = int(sys.argv[sys.argv.index("--limit") + 1])
-            except Exception:
-                pass
-        asyncio.run(pipeline(query, limit, json_out=json_out))
-
+            limit = int(sys.argv[sys.argv.index("--limit") + 1])
+        results = asyncio.run(pipeline(query, limit))
+        for r in results:
+            if r.safe:
+                print(f"[SAFE] {r.domain} - {r.title or ''} - {r.final_url or r.url}")
     elif cmd == "review":
-        category = None
-        limit = 50
-        json_out = "--json" in sys.argv
-        if "--category" in sys.argv:
-            try:
-                category = sys.argv[sys.argv.index("--category") + 1]
-            except Exception:
-                pass
-        if "--limit" in sys.argv:
-            try:
-                limit = int(sys.argv[sys.argv.index("--limit") + 1])
-            except Exception:
-                pass
         con = db_connect()
-        if category:
-            cur = con.execute(
-                "SELECT url,title,domain,category FROM sites WHERE safe=1 AND category=? ORDER BY domain LIMIT ?",
-                (category, limit)
-            )
-        else:
-            cur = con.execute(
-                "SELECT url,title,domain,category FROM sites WHERE safe=1 ORDER BY category,domain LIMIT ?",
-                (limit,)
-            )
-        rows = [{"url": u, "title": t, "domain": d, "category": c} for (u, t, d, c) in cur.fetchall()]
+        cur = con.execute("SELECT domain,title,url FROM sites WHERE safe=1 ORDER BY category,domain")
+        for d, t, u in cur.fetchall():
+            print(f"{d} - {t or ''} - {u}")
         con.close()
-        if json_out:
-            print(json.dumps(rows, indent=2, ensure_ascii=False))
-        else:
-            for r in rows:
-                print(f"- [{r['category']}] {r['domain']} :: {r['title'] or ''} :: {r['url']}")
-
     elif cmd == "export":
-        if "--out" in sys.argv:
-            out = Path(sys.argv[sys.argv.index("--out") + 1])
-        else:
-            out = Path("safe_sites.json")
+        out = Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else Path("safe_sites.json")
         export_repo(out)
-
-    elif cmd == "refresh-blocklists":
-        asyncio.run(load_blocklists_async(force_refresh=True))
-        print("Blocklists refreshed.")
-
+        print(f"Exported to {out}")
+    elif cmd == "ui":
+        run_ui()
     else:
         print_help()
 
