@@ -1,13 +1,13 @@
 """
-Safe Sites Repository — Neuron Edition v4
+Safe Sites Repository — Neuron Edition v4 (Fixed)
 Free-only, secure, authenticity-focused web resource verifier.
 """
 
-import asyncio, csv, datetime as dt, json, os, re, socket, sqlite3, ssl, sys, textwrap, time
+import asyncio, csv, datetime as dt, json, re, socket, sqlite3, ssl, sys, textwrap, time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp, tldextract
 from bs4 import BeautifulSoup
@@ -18,7 +18,7 @@ APP_DIR = Path.home() / ".safe_sites_repo"
 DB_PATH, CACHE_DIR = APP_DIR / "repository.sqlite", APP_DIR / "cache"
 APP_DIR.mkdir(parents=True, exist_ok=True); CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-USER_AGENT = "SafeSitesRepo/4.0 (+https://example.local)"
+USER_AGENT = "SafeSitesRepo/4.1 (+https://example.local)"
 MAX_REDIRECTS, CONCURRENCY, REQUEST_TIMEOUT = 5, 8, 30
 
 BLOCKLIST_SOURCES = {
@@ -55,8 +55,6 @@ def db_connect():
         url TEXT PRIMARY KEY, domain TEXT, category TEXT, safe INTEGER, reasons TEXT, checked_at TEXT,
         title TEXT, description TEXT, final_url TEXT, http_status INTEGER, https INTEGER, tls_ok INTEGER,
         tls_expired INTEGER, hsts INTEGER, security_headers TEXT, blocklisted INTEGER)""")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_category ON sites(category)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_safe ON sites(safe)")
     return con
 
 def save_record(rec: SiteRecord):
@@ -85,46 +83,41 @@ def export_repo(path: Path):
     path.write_text(json.dumps(rows,indent=2,ensure_ascii=False),encoding="utf-8")
     print(f"Exported {len(rows)} safe sites to {path}")
 
-def review(category=None, limit=50, json_out=False):
-    con = db_connect()
-    if category:
-        cur = con.execute("SELECT url,title,domain,category FROM sites WHERE safe=1 AND category=? ORDER BY domain LIMIT ?",(category,limit))
-    else:
-        cur = con.execute("SELECT url,title,domain,category FROM sites WHERE safe=1 ORDER BY category,domain LIMIT ?",(limit,))
-    rows=[{"url":u,"title":t,"domain":d,"category":c} for (u,t,d,c) in cur.fetchall()]
-    con.close()
-    print(json.dumps(rows,indent=2,ensure_ascii=False) if json_out else "\n".join(f"- [{r['category']}] {r['domain']} :: {r['title'] or ''} :: {r['url']}" for r in rows))
-
 # ---------------- BLOCKLISTS ---------------- #
-async def _fetch_text(session,url): 
+async def _fetch_text(session,url):
     try:
-        async with session.get(url,headers={"User-Agent":USER_AGENT},timeout=REQUEST_TIMEOUT) as r: return await r.text()
-    except: return ""
+        async with session.get(url,headers={"User-Agent":USER_AGENT},timeout=REQUEST_TIMEOUT) as r:
+            return await r.text()
+    except:
+        return ""
 
-def load_blocklists(force_refresh=False)->Dict[str,set]:
+async def load_blocklists_async(force_refresh=False)->Dict[str,set]:
     cache_file = CACHE_DIR/"blocklists.json"
     fresh = cache_file.exists() and (time.time()-cache_file.stat().st_mtime)<86400
     if fresh and not force_refresh:
         return {k:set(v) for k,v in json.load(open(cache_file)).items()}
-    async def pull_all():
-        async with aiohttp.ClientSession() as s:
-            return await asyncio.gather(*[_fetch_text(s,u) for u in BLOCKLIST_SOURCES.values()])
-    texts = asyncio.get_event_loop().run_until_complete(pull_all())
+    async with aiohttp.ClientSession() as s:
+        texts = await asyncio.gather(*[_fetch_text(s,u) for u in BLOCKLIST_SOURCES.values()])
     lists={"domains":set(),"urls":set()}
     try:
         for row in csv.DictReader(texts[0].splitlines()):
-            u=row.get("url"); 
-            if u and u.startswith("http"): lists["urls"].add(u.strip()); lists["domains"].add(tldextract.extract(u).registered_domain)
+            u=row.get("url")
+            if u and u.startswith("http"):
+                lists["urls"].add(u.strip())
+                lists["domains"].add(tldextract.extract(u).registered_domain)
     except: pass
     try:
         for line in texts[1].splitlines():
             if line and not line.startswith("#") and line.startswith("http"):
-                u=line.split(",")[0].strip(); lists["urls"].add(u); lists["domains"].add(tldextract.extract(u).registered_domain)
+                u=line.split(",")[0].strip()
+                lists["urls"].add(u)
+                lists["domains"].add(tldextract.extract(u).registered_domain)
     except: pass
     try:
         for line in texts[2].splitlines():
             if line.startswith("http"):
-                lists["urls"].add(line.strip()); lists["domains"].add(tldextract.extract(line.strip()).registered_domain)
+                lists["urls"].add(line.strip())
+                lists["domains"].add(tldextract.extract(line.strip()).registered_domain)
     except: pass
     json.dump({k:sorted(v) for k,v in lists.items()},open(cache_file,"w"))
     return lists
@@ -134,12 +127,20 @@ _dns_cache={}
 async def dns_resolves(host):
     if not host: return False
     if host in _dns_cache: return _dns_cache[host]
-    try: await asyncio.get_event_loop().getaddrinfo(host,443); _dns_cache[host]=True; return True
-    except: _dns_cache[host]=False; return False
+    try:
+        await asyncio.get_event_loop().getaddrinfo(host,443)
+        _dns_cache[host]=True
+        return True
+    except:
+        _dns_cache[host]=False
+        return False
 
 def _parse_cert_not_after(cert):
-    try: return dt.datetime.strptime(cert.get("notAfter"),"%b %d %H:%M:%S %Y %Z") if cert.get("notAfter") else None
-    except: return None
+    try:
+        return dt.datetime.strptime(cert.get("notAfter"),"%b %d %H:%M:%S %Y %Z") if cert.get("notAfter") else None
+    except:
+        return None
+
 def get_tls_info(hostname: str) -> Tuple[bool, Optional[bool]]:
     try:
         ctx = ssl.create_default_context()
@@ -306,7 +307,7 @@ async def check_site(url: str, blocklists: Dict[str, set], sem: asyncio.Semaphor
 
 # ---------------- PIPELINE ---------------- #
 async def pipeline(query: str, limit: int = 30, json_out: bool = False):
-    blocklists = load_blocklists()
+    blocklists = await load_blocklists_async()
     urls = search_web(query, max_results=limit)
     sem = asyncio.Semaphore(CONCURRENCY)
     tasks = [check_site(u, blocklists, sem) for u in urls]
@@ -320,8 +321,8 @@ async def pipeline(query: str, limit: int = 30, json_out: bool = False):
             status = "SAFE" if rec.safe else "UNSAFE"
             color = "\033[92m" if rec.safe else "\033[91m"
             reset = "\033[0m"
-            print(f"{color}[{status}]{reset} {rec.category} — {rec.domain} — {rec.title or rec.final_url or rec.url}")
-
+            reason_str = f" — {', '.join(rec.reasons)}" if rec.reasons else ""
+            print(f"{color}[{status}]{reset} {rec.category} — {rec.domain} — {rec.title or rec.final_url or rec.url}{reason_str}")
     if json_out:
         print(json.dumps([asdict(r) for r in results], indent=2, ensure_ascii=False))
 
@@ -335,7 +336,7 @@ def print_help():
       review [--category "Name"] [--limit N] [--json]
                                               Show verified safe sites.
       export --out path.json                  Export safe sites as JSON.
-      refresh-blocklists                      Refresh blocklists cache.
+      refresh-blocklists                      Refresh blocklist cache.
 
     Examples:
       python safe_sites.py search "perth wa government public services site" --limit 25
@@ -377,7 +378,24 @@ def main():
                 limit = int(sys.argv[sys.argv.index("--limit") + 1])
             except Exception:
                 pass
-        review(category, limit, json_out=json_out)
+        con = db_connect()
+        if category:
+            cur = con.execute(
+                "SELECT url,title,domain,category FROM sites WHERE safe=1 AND category=? ORDER BY domain LIMIT ?",
+                (category, limit)
+            )
+        else:
+            cur = con.execute(
+                "SELECT url,title,domain,category FROM sites WHERE safe=1 ORDER BY category,domain LIMIT ?",
+                (limit,)
+            )
+        rows = [{"url": u, "title": t, "domain": d, "category": c} for (u, t, d, c) in cur.fetchall()]
+        con.close()
+        if json_out:
+            print(json.dumps(rows, indent=2, ensure_ascii=False))
+        else:
+            for r in rows:
+                print(f"- [{r['category']}] {r['domain']} :: {r['title'] or ''} :: {r['url']}")
 
     elif cmd == "export":
         if "--out" in sys.argv:
@@ -387,7 +405,7 @@ def main():
         export_repo(out)
 
     elif cmd == "refresh-blocklists":
-        load_blocklists(force_refresh=True)
+        asyncio.run(load_blocklists_async(force_refresh=True))
         print("Blocklists refreshed.")
 
     else:
