@@ -1,0 +1,5 @@
+aiohttp>=3.9
+beautifulsoup4>=4.12
+duckduckgo_search>=5.3
+tldextract>=5.1
+streamlit>=1.36
